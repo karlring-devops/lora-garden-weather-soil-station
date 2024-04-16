@@ -1,0 +1,348 @@
+// using arduino c++ code write a programme to output every second in a csv format 
+// a line that contains the sensor data for an Arduino Uno has the following sensors 
+// attached: DHT11, Soil Moisture Meter, DS1302 RTC sensor, Light Sensor (LDR Photoresistor)
+// and has a MicroSD card reader attached with the following pinouts. 
+//
+// PLease write a script in arduino to output all the data from the sensors every second 
+// in CSV format, using the RTC as a timestamp for each row.
+// Print this to the Serial Monitor and also the MicroSD Card to a file call DATALOG.txt
+
+// #################################### //
+// PINOUT: DHT11
+// #################################### //
+// VCC    --> 5V 
+// GND     --> GND
+// DATA    --> D4
+// #################################### //
+// PINOUT: SOIL METER
+// #################################### //
+// VCC    --> 5V 
+// GND     --> GND
+// DATA    --> A2
+// #################################### //
+// PINOUT: LDR (PHOTOSENSOR)
+// #################################### //
+// VCC    --> 5V 
+// GND     --> 270ohm RES
+// RES    --> A1
+// #################################### //
+// PINOUT: MICRO SD card reader
+// #################################### //
+// VCC    --> 5V 
+// GND     --> GND
+// MISO --> D12
+// MOSO --> D11
+// SCK     --> D13
+// CS     --> D10
+// #################################### //
+// PINOUT: DS1302 RTC
+// #################################### //
+// CS    --> D5  // Chip Enable
+// DATA  --> D6  // Input/Output
+// SCK   --> D7  // Serial Clock
+// VCC   --> 5V 
+// GND   --> GND
+// #################################### //
+// PINOUT: LED Confirm MicroSD Write
+// #################################### //
+// LED --> D8
+// LED --> 270 ohm RES
+// RES --> GND
+// #################################### //
+// PINOUT: LoRa
+// #################################### //
+// ATK-LORA-01 V30 
+// SX1278
+// 410MHZ-411MHZ 
+// DC3.3V-5V module
+// ------------------------------------ //
+// Search: "OSOYOO UART LoRa wireless module"
+// Source: https://osoyoo.com/2018/07/26/osoyoo-lora-tutorial-how-to-use-the-uart-lora-module-with-arduino/
+// ------------------------------------ //
+// VCC   --> 5V 
+// GND   --> GND
+// M0    --> GND  #--- sets default mode TX/RX
+// TX    --> 2    #--- GPIO(any)
+// RX    --> 3    #--- GPIO(any)
+// AUX   --> NC   #--- not connected
+// #################################### //
+// boost converter (STANDALONE POWER)
+// #################################### //
+// 5*DC-DC Boost Converter Step Up Module 
+// 1-5V to 5V 600mA
+// Input voltage: 1V~5V
+// Output: 5V / 500mA
+// PCB size: 17.55mm*25.22mm*5.85 mm
+// #################################### //
+// Charger TP4056 (STANDALONE POWER)
+// #################################### //
+// TP4056 Standalone Linear Li-lon Battery Charger with Thermal Regulation in SOP-8
+// https://dlnmh9ip6v2uc.cloudfront.net/datasheets/Prototyping/TP4056.pdf
+// ·Input Supply Voltage(VCC)：-0.3V～8V
+// ·TEMP：-0.3V～10V
+// ·CE：-0.3V～10V
+// ·BAT Short-Circuit Duration：Continuous
+// ·BAT Pin Current：1200mA
+// ·PROG Pin Current：1200uA
+// ·Maximum Junction Temperature：145℃
+// ·Operating Ambient Temperature Range：-40
+// ℃～85℃
+// ·Lead Temp.(Soldering, 10sec)：260℃
+// https://dlnmh9ip6v2uc.cloudfront.net/datasheets/Prototyping/TP4056.pdf
+
+// #################################### //
+// Standalone Power Supply
+// #################################### //
+// USE: standalone 18650 power + USB TypeC Charger
+// ·boost converter (BCONV)
+// ·Battery Charger (BCHRG)
+// ·18650           
+// ·Arduino
+// -----------------------------------------------------
+// TP4056       | BoostConverter  | 18650    | Arduino        
+// -----------------------------------------------------
+// OUT(+)  -->  | IN(+)           |          |
+// OUT(-)  -->  | IN(-)           |          |
+// B(+)    -----|-----------------|-> (+)    |
+// B(-)    -----|-----------------|-> (-)    |
+//              | VCC  ----------------------|-> VIN
+//              | 5V   ----------------------|-> GND
+// #################################### //
+
+
+
+#include <TimeLib.h>
+#include <SPI.h>
+#include <SD.h>
+#include <SoftwareSerial.h>
+
+SoftwareSerial mySerial(2, 3); //TX, RX
+
+#include <dht.h>
+
+#define DHTPIN 4  // Pin connected to DHT11 data pin
+#define SOILPIN A2  // Pin connected to Soil Moisture Meter data pin
+#define LDRPIN A1  // Pin connected to Light Sensor data pin
+#define SD_CS 10  // Chip select pin for microSD card reader
+
+dht DHT;
+File dataFile;
+
+#include <stdio.h>
+#include <DS1302.h>
+
+// namespace {
+
+// Set the appropriate digital I/O pin connections. These are the pin
+// assignments for the Arduino as well for as the DS1302 chip. See the DS1302
+// datasheet:
+//
+//   http://datasheets.maximintegrated.com/en/ds/DS1302.pdf
+const int RTC_PIN_CS    = 5;  // Chip Enable
+const int RTC_PIN_DATA  = 6;  // Input/Output
+const int RTC_PIN_SCK   = 7;  // Serial Clock
+
+// Create a DS1302 object.
+DS1302 rtc(RTC_PIN_CS, RTC_PIN_DATA, RTC_PIN_SCK);
+
+void rtcTimeStamp() {
+  // Get the current time and date from the chip.
+  Time t = rtc.time();
+  // Format the time and date and insert into the temporary buffer.
+  char buf[50];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+           t.yr, t.mon, t.date,
+           t.hr, t.min, t.sec);
+
+  // Print the formatted string to serial so we can see the time.
+  // Serial.println(buf);
+ }
+// }  // namespace
+
+void rtcInit() {
+  // https://github.com/msparks/arduino-ds1302/tree/master?tab=readme-ov-file
+  // Initialize a new chip by turning off write protection and clearing the
+  // clock halt flag. These methods needn't always be called. See the DS1302
+  // datasheet for details.
+  rtc.writeProtect(false);
+  rtc.halt(false);
+  // Make a new time object to set the date and time.
+  // Sunday, September 22, 2013 at 01:38:50.
+  Time t(2024, 4, 3, 19, 29, 00, Time::kWednesday);
+  // Set the time and date on the chip.
+  rtc.time(t);
+}
+
+const int MSD_LED_MULTI = 8;
+const int MSD_LED_ERROR = 9;
+
+void msdStatus( int state ) {
+
+  pinMode(MSD_LED_MULTI, OUTPUT);
+  pinMode(MSD_LED_ERROR, OUTPUT);
+
+  if ( state == 0 ) {
+    digitalWrite(MSD_LED_MULTI,HIGH);
+    delay(50);                      // wait for a second
+    digitalWrite(MSD_LED_MULTI,LOW);
+
+  } else {
+    digitalWrite(MSD_LED_ERROR,HIGH);
+    delay(50);                      // wait for a second
+    digitalWrite(MSD_LED_ERROR,LOW);
+  }
+}
+
+void LoraSendStatus(String input){
+
+    // if(Serial.available() > 0){
+      //Read from serial monitor and send over 
+      // OSOYOO UART LoRa wireless module
+      // String input = Serial.readString();
+      // mySerial.println("[SND:"+String(randomNumber)+"] " + input);    
+      mySerial.println(String (input));    
+      Serial.println("[SND] "+222); // + input);  
+    // }
+}
+
+void setup() {
+  Serial.begin(9600);
+  mySerial.begin(9600);
+  // Initialise RTC Module
+  rtcInit();
+  // Set PinMode(MicroSD)
+  pinMode(SD_CS, OUTPUT);
+  // Check if the microSD card is available
+  if (!SD.begin(SD_CS)) {
+    Serial.println("MicroSD initialization failed!");
+    return;
+  }
+  
+  Serial.println("MicroSD initialized successfully!");
+  
+  dataFile = SD.open("DATALOG.TXT", FILE_WRITE);
+  if (dataFile) {
+    dataFile.println("RTC_Timestamp, DHT_Temperature, DHT_Humidity, Soil_Moisture, Light_Intensity");
+    dataFile.close();
+  } else {
+    msdStatus(1);
+    Serial.println("Error opening DATALOG.TXT for writing!");
+  }
+}
+
+void loop() {
+  // Read DHT11 sensor data
+  // int chk = DHT.read11(DHTPIN);
+  int chk = DHT.read22(DHTPIN);
+
+  // Read soil moisture meter data
+  int soil_moisture = analogRead(SOILPIN);
+  
+  // Read light sensor (photoresistor) data
+  int light_intensity = analogRead(LDRPIN);
+  
+  // Get RTC Current Time
+  Time t = rtc.time();
+
+  // Print data to serial monitor
+  Serial.print("TimeStamp: ");
+
+  String RTC_MON;
+  String RTC_DAY;
+  String RTC_HR;
+  String RTC_MIN;
+  String RTC_SEC;
+
+  if ( t.mon < 10  ) {  RTC_MON = '0' + String(t.mon);  } else {  RTC_MON = String(t.mon); }
+  if ( t.date < 10 ) {  RTC_DAY = '0' + String(t.date); } else {  RTC_DAY = String(t.date); }
+  if ( t.hr < 10   ) {  RTC_HR = '0'  + String(t.hr);   } else {  RTC_HR = String(t.hr); }
+  if ( t.min < 10  ) {  RTC_MIN = '0' + String(t.min);  } else {  RTC_MIN = String(t.min); }
+  if ( t.sec < 10  ) {  RTC_SEC = '0' + String(t.sec);  } else {  RTC_SEC = String(t.sec); }
+
+  String RTC_TIME_STAMP = String(t.yr) + RTC_MON + RTC_DAY + RTC_HR + RTC_MIN + RTC_SEC ;
+  Serial.print(RTC_TIME_STAMP);
+  Serial.print(", Temperature: ");
+  // Serial.print(temperature);
+  Serial.print(DHT.temperature,1);
+  Serial.print(" °C, Humidity: ");
+  // Serial.print(humidity);
+  Serial.print(DHT.humidity,1);
+  Serial.print(" %, Soil Moisture: ");
+  Serial.print(soil_moisture);
+  Serial.print(", Light Intensity: ");
+  // Serial.println(light_intensity);
+  Serial.print(light_intensity);
+  
+  // Write data to microSD card
+  dataFile = SD.open("DATALOG.TXT", FILE_WRITE);
+  if (dataFile) {
+
+    unsigned long fileSizeBefore = dataFile.size();
+
+    // String RTC_MON = '0' + String(t.mon);
+    // String RTC_TIME_STAMP = String(t.yr) + RTC_MON + String(t.date) + String(t.hr) + String(t.min) + String(t.sec);
+    String RTC_MON;
+    String RTC_DAY;
+    String RTC_HR;
+    String RTC_MIN;
+    String RTC_SEC;
+
+    if ( t.mon < 10  ) {  RTC_MON = '0' + String(t.mon);  } else {  RTC_MON = String(t.mon); }
+    if ( t.date < 10 ) {  RTC_DAY = '0' + String(t.date); } else {  RTC_DAY = String(t.date); }
+    if ( t.hr < 10   ) {  RTC_HR = '0'  + String(t.hr);   } else {  RTC_HR = String(t.hr); }
+    if ( t.min < 10  ) {  RTC_MIN = '0' + String(t.min);  } else {  RTC_MIN = String(t.min); }
+    if ( t.sec < 10  ) {  RTC_SEC = '0' + String(t.sec);  } else {  RTC_SEC = String(t.sec); }
+
+    String RTC_TIME_STAMP = String(t.yr)+","+RTC_MON+","+RTC_DAY+","+RTC_HR+","+RTC_MIN+","+RTC_SEC ;
+
+
+  String DATASTRING = String (RTC_TIME_STAMP+","+DHT.temperature+","+DHT.humidity+","+soil_moisture+","+light_intensity);
+    // dataFile.print(RTC_TIME_STAMP);
+    // dataFile.print(", ");
+    // dataFile.print(DHT.temperature,1);
+    // dataFile.print(", ");
+    // // dataFile.print(humidity);
+    // dataFile.print(DHT.humidity,1);
+    // dataFile.print(", ");
+    // dataFile.print(soil_moisture);
+    // dataFile.print(", ");
+    // dataFile.println(light_intensity);    
+    dataFile.println(DATASTRING);    
+
+    unsigned long fileSizeAfter = dataFile.size();
+
+    dataFile.close();
+
+    String LORADATA = DATASTRING + ", FileSize: " + fileSizeAfter;
+    // Serial.print(", FileSize: ");
+    // Serial.println(light_intensity);
+    // dataFile.println(light_intensity);    
+    Serial.println(LORADATA);
+
+    if ( fileSizeAfter > fileSizeBefore ) {
+      // INSERT CODE HERE:
+      //      * use WIRE to WRITE to A/D pin with new LED / 220o attached
+      //  GREEN LED / write ok
+      msdStatus(0);
+      LoraSendStatus('[OK] ' + String(fileSizeAfter));
+      delay(5000);
+    } else {
+      // INSERT CODE HERE:
+      //      * use WIRE to WRITE to A/D pin with new LED / 220o attached
+      //  RED LED / write FAILED !!!!!
+      msdStatus(1);
+      delay(1000);
+
+    }
+
+  } else {
+    Serial.println("Error opening DATALOG.TXT for writing!");
+  }
+  
+  // delay(1000); // Wait for 1 second
+}
+
+
+
+
+
