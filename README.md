@@ -1,6 +1,14 @@
-```
-Story:
+Story (Reciever):
 
+```
+using arduino c++ code write a programme to Receive via LoRa WRITE_STATUS of BaseStation such that the 1.8"TFT
+will display a "Received (OK)" message when the Base Station successfully writes the latest Measurements to
+SD Card
+```
+
+
+Story (BaseStation):
+```
 using arduino c++ code write a programme to output every second in a csv format 
 a line that contains the sensor data for an Arduino Uno has the following sensors 
 attached: DHT11, Soil Moisture Meter, DS1302 RTC sensor, Light Sensor (LDR Photoresistor)
